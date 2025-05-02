@@ -273,7 +273,7 @@ const App = () => {
       setWords({});
       setBeeps([]);
     };
-  }, [clear]);
+  }, [clear, unit]);
 
   useEffect(() => {
     function onConnect() {
