@@ -16,6 +16,12 @@ Start the dev server:
 pnpm dev
 ```
 
+Start the websocket server, for online usage:
+
+```bash
+pnpm server
+```
+
 Build the app for production:
 
 ```bash
