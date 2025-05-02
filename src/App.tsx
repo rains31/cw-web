@@ -1,6 +1,7 @@
 import "./App.css";
-import { useEffect, useState } from "react";
-import { io } from "socket.io-client";
+import { type ChangeEventHandler, useEffect, useState, useMemo } from "react";
+import { socket } from "./socket.ts";
+import vConsole from "vconsole";
 // import cw from 'cw/dist/cw.esm';
 type Beep = {
   ts: number;
@@ -186,19 +187,41 @@ function createWriter(dataView: DataView) {
     },
   };
 }
+
 const App = () => {
   const [clear, setClear] = useState(0);
   const [tmpDuration, setTmpDuration] = useState(0);
-  const [wpm, setWpm] = useState(20);
+  const [wpm, setWpm] = useState(Number(localStorage.getItem("wpm") ?? 20));
   const [beeps, setBeeps] = useState<Beep[]>([]);
   const [beep, setBeep] = useState<Beep>();
   const [seq, setSeq] = useState<string[]>([]);
   const [words, setWords] = useState<Record<string, string>>({});
+  const [messages, setMessages] = useState<
+    Record<
+      string,
+      {
+        words: Record<string, string>;
+        wpm: number;
+        callSign: string;
+      }
+    >
+  >({});
   const [cwPlayer, setCwPlayer] = useState<HTMLAudioElement>();
+  const [callSign, setCallSign] = useState<string>(
+    localStorage.getItem("CallSign") ?? "CALLSIGN"
+  );
+  // const [play, setPlay] = useState<(e: MouseEvent | KeyboardEvent) => void>();
+  // const [pause, setPause] = useState<(e: MouseEvent | KeyboardEvent) => void>();
+  const isMobile = /Mobi|Android|iPhone/i.test(navigator.userAgent);
+  const isTouch = "ontouchstart" in window;
+  const unit = useMemo(() => 1.2 / wpm, [wpm]);
+  const wordBreak = useMemo(() => 3.6 / wpm, [wpm]);
+
   useEffect(() => {
     console.log("App is mounted");
     window.oncontextmenu = () => false;
     window.onselectstart = () => false;
+    const vconsole = new vConsole();
 
     if (!clear) {
       const cwPlayer = window.document.getElementById(
@@ -212,43 +235,73 @@ const App = () => {
     let duration = 0;
     let gap = 0;
     const beeps: Beep[] = [];
-    const play = (e: MouseEvent | KeyboardEvent) => {
-      console.log("play:", e.which ?? e.code);
+    const play = (e: MouseEvent | KeyboardEvent | TouchEvent) => {
+      // console.log("play:", e?.which ?? e?.code);
       gap = beeps.length ? Math.min((+new Date() - ts) / 1000, 1) : 0;
       ts = +new Date();
       duration = 0;
       setBeeps([...beeps, { gap, duration, ts }]);
     };
     const padding = document.getElementById("padding") as HTMLDivElement;
-    const pause = (e: MouseEvent | KeyboardEvent) => {
-      console.log("pause:", e.which ?? e.code);
+    const pause = (e: MouseEvent | KeyboardEvent | TouchEvent) => {
+      // console.log("pause:", e?.which ?? e?.code);
       duration = Math.min((+new Date() - ts) / 1000, 0.5);
       beeps.push({ gap, duration, ts });
       ts = +new Date();
       padding.style.borderLeftWidth = "0px";
-      if (padding.clientWidth < 300) beeps.shift();
-      setBeeps([...beeps]);
+      if (padding.clientWidth < 200) beeps.shift();
+      if (duration < unit) {
+        setTimeout(() => {
+          setBeeps([...beeps]);
+        }, (unit - duration) * 1000);
+      } else {
+        setBeeps([...beeps]);
+      }
     };
+    // setPlay(play);
+    // setPause(pause);
 
-    window.onmousedown = play;
-    window.onmouseup = pause;
-    // window.ontouchstart = play;
-    // window.ontouchend = pause;
-    window.onkeydown = (e) => e.code === "Space" && play(e);
-    window.onkeyup = (e) => e.code === "Space" && pause(e);
-    const socket = io("/cw", {
-      autoConnect: true,
-    });
-    socket.on("message", (words) => {
-      console.log("words:", words);
-    });
-    socket.connect();
+    if (isMobile && isTouch) {
+      window.ontouchstart = play;
+      window.ontouchend = pause;
+    } else {
+      window.onmousedown = play;
+      window.onmouseup = pause;
+    }
+    window.onkeydown = (e) => (e.code === "Space" ? play(e) : true);
+    window.onkeyup = (e) => (e.code === "Space" ? pause(e) : true);
+
     return () => {
       setWords({});
       setBeeps([]);
-      socket.disconnect();
     };
   }, [clear]);
+
+  useEffect(() => {
+    function onConnect() {
+      console.log("connected");
+    }
+
+    function onDisconnect() {
+      console.log("disconnected");
+    }
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
+    socket.on(
+      "message",
+      (msg: {
+        words: Record<string, string>;
+        callSign: string;
+        wpm: number;
+      }) => {
+        setMessages({ ...messages, [msg.callSign]: msg });
+      }
+    );
+    socket.connect();
+    return () => {
+      socket.disconnect();
+    };
+  }, []);
 
   useEffect(() => {
     console.log("wpm changed to", wpm);
@@ -262,32 +315,28 @@ const App = () => {
         ? setInterval(() => {
             const tmpDuration = (+new Date() - ts) / 1000;
             setTmpDuration(tmpDuration);
-            if (tmpDuration > 0.5) clearInterval(timer);
+            if (tmpDuration > wordBreak) clearInterval(timer);
           }, 10)
         : 0;
     if (last) setBeep(last);
     return () => {
       setTmpDuration(0);
-      if (timer) {
-        clearInterval(timer);
-      }
+      clearInterval(timer);
     };
-  }, [beeps]);
+  }, [beeps, wordBreak]);
 
   useEffect(() => {
+    // if (isMobile) return;
     if (beep?.duration === 0) {
       cwPlayer?.play();
     } else if (beep?.duration) {
-      if (beep.duration < 0.1) {
-        setTimeout(() => cwPlayer?.pause(), 0.1);
+      if (beep.duration < unit) {
+        setTimeout(() => cwPlayer?.pause(), (unit - beep.duration) * 1000);
       } else {
         cwPlayer?.pause();
       }
     }
-  }, [beep, cwPlayer]);
-
-  const unit = 0.07;
-  const wordBreak = unit * 3;
+  }, [beep, cwPlayer, unit]);
 
   useEffect(() => {
     const last6 = beeps.slice(-6);
@@ -313,12 +362,15 @@ const App = () => {
       setTimeout(() => {
         setClear(+new Date());
       }, 200);
+      return;
     }
+    return () => {};
   }, [seq]);
 
-  // useEffect(() => {
-  // console.table(words);
-  // }, [words]);
+  useEffect(() => {
+    // console.log({ words, wpm, callSign });
+    socket.emit("message", { words, wpm, callSign });
+  }, [words, wpm, callSign]);
 
   return (
     <div className="content">
@@ -343,13 +395,38 @@ const App = () => {
           }}
         />
       </div>
-      <div id="input">
-        {Object.entries(words).map(([k, v]) => {
+      {/* <button onMouseDown={(e) => play(e)}>Play</button> */}
+      <div id="messages">
+        我({callSign}): {wpm} WPM
+        <br />
+        <div className="message">
+          {Object.entries(words).map(([k, v]) => {
+            return (
+              <div key={k}>
+                {v}
+                <br />
+                {translate(v)}
+              </div>
+            );
+          })}
+        </div>
+        {Object.entries(messages).map(([user, msg]) => {
           return (
-            <div key={k}>
-              {v}
+            <div key={user}>
               <br />
-              {translate(v)}
+              {msg.callSign}: {msg.wpm} WPM
+              <br />
+              <div className="message">
+                {Object.entries(msg.words).map(([k, v]) => {
+                  return (
+                    <div key={k}>
+                      {v}
+                      <br />
+                      {translate(v)}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           );
         })}
@@ -367,8 +444,11 @@ const App = () => {
         })}
       </div>
       <div className="help">
-        CW 通信 Morse Code 练习工具。使用鼠标或空格键触发，暂不支持自动键。
+        CW / Morse Code 练习工具。使用鼠标或空格键触发，暂不支持自动键。
         连续六个滴清屏，bug反馈请联系 z@zt.vc
+        <br />
+        CW / Morse Code Playground. Use space or Mouse to play. automatic key is
+        not supported yet. Bug report: z@zt.vc
       </div>
       {/* <audio
           controls={true}
@@ -381,25 +461,37 @@ const App = () => {
         <br /> */}
       <br />
       <audio controls={false} autoPlay={false} id="cwPlayer" loop />
-      {/* WPM:{" "}
-      <select
-        defaultValue={wpm}
-        onChange={(e): ChangeEventHandler<HTMLSelectElement> | undefined => {
-          setWpm(Number(e.target.value));
-          return;
-        }}
-      >
-        <option value={5}>5</option>
-        <option value={10}>10</option>
-        <option value={15}>15</option>
-        <option value={20}>20</option>
-        <option value={25}>25</option>
-        <option value={30}>30</option>
-      </select> */}
       {/* <h1>CW Test</h1> */}
       {/* spped: {counter} */}
       {/* { cw} */}
       {/* <div>cw test</div> */}
+      我的呼号(My CallSign):
+      <input
+        onChange={(e) => {
+          console.log(e);
+          const newCallSign = e.target.value.toUpperCase();
+          localStorage.setItem("CallSign", newCallSign);
+          setCallSign(newCallSign);
+        }}
+        size={10}
+        value={callSign}
+      />{" "}
+      WPM:{" "}
+      <select
+        defaultValue={wpm}
+        onChange={(e): ChangeEventHandler<HTMLSelectElement> | undefined => {
+          const newWpm = Number(e.target.value);
+          localStorage.setItem("wpm", newWpm.toFixed());
+          setWpm(newWpm);
+          return;
+        }}
+      >
+        <option value={12}>12</option>
+        <option value={15}>15</option>
+        <option value={20}>20</option>
+        <option value={24}>24</option>
+        <option value={30}>30</option>
+      </select>
     </div>
   );
 };

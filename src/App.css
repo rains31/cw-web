@@ -30,7 +30,7 @@ select {
   font-weight: 400;
   opacity: 0.5;
 }
-#input {
+.message {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
@@ -59,7 +59,7 @@ select {
   flex-wrap: nowrap;
   height: 6px;
   row-gap: 10px;
-  width: 100vw;
+  width: calc(100vw - 50);
   padding: 10px;
   div {
     display: flex;
