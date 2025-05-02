@@ -1,7 +1,14 @@
 import "./App.css";
-import { type ChangeEventHandler, useEffect, useState, useMemo } from "react";
+import {
+  type ChangeEventHandler,
+  useEffect,
+  useState,
+  useMemo,
+  useCallback,
+} from "react";
 import { socket } from "./socket.ts";
 import vConsole from "vconsole";
+import { debounce } from "lodash-es";
 // import cw from 'cw/dist/cw.esm';
 type Beep = {
   ts: number;
@@ -365,9 +372,20 @@ const App = () => {
     return () => {};
   }, [seq]);
 
+  const updateMessage = useCallback(
+    debounce((data) => {
+      socket.emit("message", data);
+    }, unit * 7 * 1000),
+    []
+  );
+
   useEffect(() => {
     // console.log({ words, wpm, callSign });
-    socket.emit("message", { words, wpm, callSign });
+    updateMessage({
+      words,
+      wpm,
+      callSign,
+    });
   }, [words, wpm, callSign]);
 
   return (
